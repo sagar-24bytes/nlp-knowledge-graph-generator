@@ -10,56 +10,108 @@ nlp = spacy.load("en_core_web_sm")
 with open("sample.txt", "r", encoding="utf-8") as file:
     text = file.read()
 
+
+# -----------------------------------
+# HELPER: clean subject/object label
+# -----------------------------------
+def clean_span(token):
+    """
+    Returns a clean, short label for a token.
+    Only keeps compound words, adjectives, determiners attached
+    directly to the token — avoids pulling in full subtrees.
+    """
+    keep_deps = {"compound", "amod", "det", "poss", "nummod"}
+    parts = []
+    for t in token.subtree:
+        if t == token:
+            parts.append(t)
+        elif t.dep_ in keep_deps and t.head == token:
+            parts.append(t)
+    if not parts:
+        return token.text
+    # Rebuild in original document order
+    parts_sorted = sorted(parts, key=lambda t: t.i)
+    return " ".join(t.text for t in parts_sorted).strip()
+
+
+# -----------------------------------
+# RELATION EXTRACTION
+# -----------------------------------
+pronouns = {"he", "she", "it", "they", "him", "her", "them", "his", "hers", "their"}
+
 doc = nlp(text)
-
 relations = set()
+last_subject = None
 
-# -----------------------------------
-# RELATION EXTRACTION (FINAL FIXED)
-# -----------------------------------
 for sent in doc.sents:
+
+    sent_subj = None
+
+    # --- Pass 1: find subject of this sentence ---
+    for token in sent:
+        if token.dep_ in ("nsubj", "nsubjpass"):
+            if token.text.lower() in pronouns:
+                # Resolve pronoun to last known subject
+                sent_subj = last_subject
+            else:
+                sent_subj = clean_span(token)
+                last_subject = sent_subj
+            break
+
+    # Fallback: first word is a pronoun
+    if sent_subj is None and doc[sent.start].text.lower() in pronouns:
+        sent_subj = last_subject
+
+    if sent_subj is None:
+        sent_subj = last_subject
+
+    if sent_subj is None:
+        continue
+
+    # --- Pass 2: extract relations ---
     for token in sent:
 
-        # Case 1: Subject-Verb-Object
+        # ROOT → direct object or attribute
         if token.dep_ == "ROOT":
-            subject = [w for w in token.lefts if w.dep_ in ("nsubj", "nsubjpass")]
-            obj = [w for w in token.rights if w.dep_ in ("dobj", "attr")]
+            for child in token.children:
+                if child.dep_ in ("dobj", "attr"):
+                    obj = clean_span(child)
+                    rel = token.lemma_.lower()
+                    relations.add((sent_subj, rel, obj))
 
-            if subject and obj:
-                subj = " ".join([w.text for w in subject[0].subtree]).strip().strip(".")
-                objt = " ".join([w.text for w in obj[0].subtree]).strip().strip(".")
-                rel = token.text.lower()
-
-                relations.add((subj, rel, objt))
-
-        # Case 2: Prepositional relations (FIXED 🔥)
+        # Prepositional relations: "works at IBM", "born in Delhi"
         if token.dep_ == "prep":
-            pobj = [w for w in token.children if w.dep_ == "pobj"]
-
-            if pobj:
-                head = token.head
-                subject = [w for w in head.lefts if w.dep_ in ("nsubj", "nsubjpass")]
-
-                if subject:
-                    subj = " ".join([w.text for w in subject[0].subtree]).strip().strip(".")
+            head = token.head
+            pobj_list = [w for w in token.children if w.dep_ == "pobj"]
+            for pobj in pobj_list:
+                if head.pos_ in ("VERB", "AUX") or head.dep_ == "ROOT":
                     rel = head.text.lower() + " " + token.text.lower()
-                    objt = pobj[0].text.strip().strip(".")
+                    obj = clean_span(pobj)
+                    relations.add((sent_subj, rel, obj))
 
-                    relations.add((subj, rel, objt))  # ✅ FIXED HERE
+        # "X is a Y" copula
+        if token.dep_ == "ROOT" and token.lemma_ in ("be",):
+            for child in token.children:
+                if child.dep_ in ("attr", "acomp"):
+                    obj = clean_span(child)
+                    relations.add((sent_subj, "is", obj))
+
 
 # -----------------------------------
 # PRINT RELATIONS
 # -----------------------------------
 print("\nExtracted Relations:")
 for r in sorted(relations):
-    print(r)
+    print(f"  {r[0]}  →  {r[1]}  →  {r[2]}")
+
 
 # -----------------------------------
-# PRINT ENTITIES
+# ENTITY DETECTION (on full text)
 # -----------------------------------
 print("\nDetected Entities:")
 for ent in doc.ents:
-    print(ent.text, "-", ent.label_)
+    print(f"  {ent.text}  -  {ent.label_}")
+
 
 # -----------------------------------
 # BUILD GRAPH
@@ -71,29 +123,59 @@ for subj, rel, obj in relations:
     G.add_node(obj)
     G.add_edge(subj, obj, label=rel)
 
-# -----------------------------------
-# CREATE OUTPUT FOLDER
-# -----------------------------------
-if not os.path.exists("output"):
-    os.makedirs("output")
 
 # -----------------------------------
 # VISUALIZATION
 # -----------------------------------
-net = Network(height="650px", width="100%", directed=True)
+net = Network(
+    height="650px",
+    width="100%",
+    directed=True,
+    bgcolor="#ffffff",
+    font_color="black"
+)
 
-net.force_atlas_2based()
-net.repulsion(node_distance=200, central_gravity=0.3)
+net.barnes_hut(
+    gravity=-8000,
+    central_gravity=0.2,
+    spring_length=200,
+    spring_strength=0.04
+)
+
+# Entity type → color
+entity_types = {ent.text: ent.label_ for ent in doc.ents}
+
+def get_color(node):
+    label = entity_types.get(node, "")
+    if label == "PERSON":           return "#ff4d6d"   # red
+    if label == "ORG":              return "#2ecc71"   # green
+    if label in ("GPE", "LOC"):     return "#3498db"   # blue
+    return "#9b59b6"                                   # purple (other)
 
 # Add nodes
 for node in G.nodes():
-    net.add_node(node, label=node, color="#97c2fc", size=25)
+    net.add_node(
+        node,
+        label=node,
+        title=f"Entity: {node}",
+        size=35,
+        color=get_color(node),
+        font={"size": 16, "color": "black"}
+    )
 
 # Add edges
 for u, v, data in G.edges(data=True):
-    net.add_edge(u, v, label=data['label'], color="gray")
+    net.add_edge(
+        u, v,
+        label=data["label"],
+        font={"align": "middle", "size": 12, "color": "#333"},
+        color="#888",
+        arrows="to",
+        smooth={"type": "curvedCW", "roundness": 0.25}
+    )
 
 # Save graph
+os.makedirs("output", exist_ok=True)
 output_file = "output/knowledge_graph.html"
 net.write_html(output_file)
 
