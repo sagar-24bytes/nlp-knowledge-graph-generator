@@ -80,14 +80,15 @@ Pandas + Streamlit Charts
 User input:
 
 ```text
-Shivam works at IBM and he was born in Delhi
+Elon Musk founded SpaceX. He was born in Pretoria. SpaceX is based in California.
 ```
 
 Generated knowledge:
 
 ```text
-Shivam → works at → IBM
-Shivam → born in → Delhi
+Elon Musk→ born in  → Pretoria
+Elon Musk → found → SpaceX
+SpaceX → based in  → California
 ```
 
 
@@ -97,9 +98,12 @@ Shivam → born in → Delhi
 * Interactive knowledge graph
 * Entity-relation table
 * Statistical charts
-  <img width="1786" height="374" alt="image" src="https://github.com/user-attachments/assets/603ff03d-eacb-472f-afab-568443a85c1d" />
-  <img width="881" height="497" alt="image" src="https://github.com/user-attachments/assets/bd2b9c1d-f0a0-4ded-957d-ebb026bd4620" />
-  <img width="1757" height="442" alt="image" src="https://github.com/user-attachments/assets/a7580b7a-1b30-4343-8869-3ea4cb1b6983" />
+ <img width="1795" height="468" alt="image" src="https://github.com/user-attachments/assets/0e37029a-ed15-4058-a7e5-8bba43f7f787" />
+ <img width="1415" height="505" alt="image" src="https://github.com/user-attachments/assets/fb444513-1663-4627-b7b0-92a029bfced5" />
+ <img width="1782" height="458" alt="image" src="https://github.com/user-attachments/assets/440904f5-ecd5-44ad-afe3-471baad49a87" />
+
+
+
 
 
 
