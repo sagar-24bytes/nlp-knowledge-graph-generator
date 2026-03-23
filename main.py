@@ -2,6 +2,7 @@ import spacy
 import networkx as nx
 from pyvis.network import Network
 import os
+import re
 
 # Load spaCy model
 nlp = spacy.load("en_core_web_sm")
@@ -10,34 +11,45 @@ nlp = spacy.load("en_core_web_sm")
 with open("sample.txt", "r", encoding="utf-8") as file:
     text = file.read()
 
+# Preprocess: fix missing space after period, normalize whitespace
+text = re.sub(r'\.([A-Z])', r'. \1', text)
+text = re.sub(r'\s+', ' ', text).strip()
+
 
 # -----------------------------------
 # HELPER: clean subject/object label
 # -----------------------------------
 def clean_span(token):
-    """
-    Returns a clean, short label for a token.
-    Only keeps compound words, adjectives, determiners attached
-    directly to the token — avoids pulling in full subtrees.
-    """
     keep_deps = {"compound", "amod", "det", "poss", "nummod"}
+    skip_pos  = {"PUNCT", "SPACE"}
+    pronouns  = {"he", "she", "it", "they", "him", "her", "them",
+                 "his", "hers", "their", "we", "i", "you"}
+
     parts = []
     for t in token.subtree:
+        if t.pos_ in skip_pos:
+            continue
+        if t.text.lower() in pronouns:
+            continue
         if t == token:
             parts.append(t)
         elif t.dep_ in keep_deps and t.head == token:
             parts.append(t)
+
     if not parts:
-        return token.text
-    # Rebuild in original document order
+        return token.text.strip()
+
     parts_sorted = sorted(parts, key=lambda t: t.i)
-    return " ".join(t.text for t in parts_sorted).strip()
+    result = " ".join(t.text for t in parts_sorted).strip()
+    result = result.strip(".,;:!?\"'()")
+    return result
 
 
 # -----------------------------------
 # RELATION EXTRACTION
 # -----------------------------------
-pronouns = {"he", "she", "it", "they", "him", "her", "them", "his", "hers", "their"}
+pronouns = {"he", "she", "it", "they", "him", "her", "them",
+            "his", "hers", "their"}
 
 doc = nlp(text)
 relations = set()
@@ -51,7 +63,6 @@ for sent in doc.sents:
     for token in sent:
         if token.dep_ in ("nsubj", "nsubjpass"):
             if token.text.lower() in pronouns:
-                # Resolve pronoun to last known subject
                 sent_subj = last_subject
             else:
                 sent_subj = clean_span(token)
@@ -90,7 +101,7 @@ for sent in doc.sents:
                     relations.add((sent_subj, rel, obj))
 
         # "X is a Y" copula
-        if token.dep_ == "ROOT" and token.lemma_ in ("be",):
+        if token.dep_ == "ROOT" and token.lemma_ == "be":
             for child in token.children:
                 if child.dep_ in ("attr", "acomp"):
                     obj = clean_span(child)

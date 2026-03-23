@@ -4,6 +4,7 @@ import pandas as pd
 import networkx as nx
 from pyvis.network import Network
 import os
+import re
 
 st.set_page_config(page_title="Knowledge Graph NLP", layout="wide")
 
@@ -18,38 +19,50 @@ st.markdown("""
 text = st.text_area("✏️ Enter your text here:", height=150)
 st.caption("💡 Example: Shivam works at IBM and he was born in Delhi.")
 
+
 # -----------------------------------
 # HELPER: clean a subtree to a short noun phrase
 # -----------------------------------
 def clean_span(token):
-    """
-    Return a clean label for a token's subtree.
-    Only keeps determiners + compound + the token itself.
-    Avoids pulling in prepositional phrases that bloat the label.
-    """
     keep_deps = {"compound", "amod", "det", "poss", "nummod"}
+    skip_pos  = {"PUNCT", "SPACE"}
+    pronouns  = {"he", "she", "it", "they", "him", "her", "them",
+                 "his", "hers", "their", "we", "i", "you"}
+
     parts = []
     for t in token.subtree:
+        if t.pos_ in skip_pos:
+            continue
+        if t.text.lower() in pronouns:
+            continue
         if t == token:
-            parts.append(t.text)
+            parts.append(t)
         elif t.dep_ in keep_deps and t.head == token:
-            parts.append(t.text)
-    # fallback: just the token text
+            parts.append(t)
+
     if not parts:
-        return token.text
-    # rebuild in original order
-    ordered = [t for t in token.subtree if t.text in parts]
-    return " ".join(t.text for t in ordered).strip()
+        return token.text.strip()
+
+    parts_sorted = sorted(parts, key=lambda t: t.i)
+    result = " ".join(t.text for t in parts_sorted).strip()
+    result = result.strip(".,;:!?\"'()")
+    return result
 
 
 # -----------------------------------
-# RELATION EXTRACTION (FIXED)
+# RELATION EXTRACTION
 # -----------------------------------
 def extract_relations(text):
+
+    # Preprocess: fix missing space after period, normalize whitespace
+    text = re.sub(r'\.([A-Z])', r'. \1', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+
     doc = nlp(text)
     relations = set()
     last_subject = None
-    pronouns = {"he", "she", "it", "they", "him", "her", "them", "his", "hers", "their"}
+    pronouns = {"he", "she", "it", "they", "him", "her", "them",
+                "his", "hers", "their"}
 
     for sent in doc.sents:
 
@@ -61,7 +74,6 @@ def extract_relations(text):
                 if token.text.lower() in pronouns:
                     sent_subj = last_subject
                 else:
-                    # FIX: use clean_span, NOT full subtree string
                     sent_subj = clean_span(token)
                     last_subject = sent_subj
                 break
@@ -92,14 +104,13 @@ def extract_relations(text):
                 head = token.head
                 pobj_list = [w for w in token.children if w.dep_ == "pobj"]
                 for pobj in pobj_list:
-                    # Make sure the prep is attached to a verb/root in this sentence
                     if head.pos_ in ("VERB", "AUX") or head.dep_ == "ROOT":
                         rel = head.text.lower() + " " + token.text.lower()
                         obj = clean_span(pobj)
                         relations.add((sent_subj, rel, obj))
 
             # "X is a Y" (appositive / classifier)
-            if token.dep_ == "ROOT" and token.lemma_ in ("be", "is", "are", "was", "were"):
+            if token.dep_ == "ROOT" and token.lemma_ == "be":
                 for child in token.children:
                     if child.dep_ in ("attr", "acomp"):
                         obj = clean_span(child)
@@ -170,9 +181,9 @@ if st.button("🚀 Generate Knowledge Graph"):
 
         def get_color(node):
             label = entity_types.get(node, "")
-            if label == "PERSON":   return "#ff4d6d"
-            if label == "ORG":      return "#2ecc71"
-            if label in ("GPE", "LOC"): return "#3498db"
+            if label == "PERSON":            return "#ff4d6d"
+            if label == "ORG":               return "#2ecc71"
+            if label in ("GPE", "LOC"):      return "#3498db"
             return "#9b59b6"
 
         for node in G.nodes():
